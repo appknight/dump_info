@@ -166,7 +166,7 @@ CLASS lcl_dump IMPLEMENTATION.
 
 
     LOOP AT mt_dump_fields ASSIGNING <n0> USING KEY by_id WHERE id = 'N0' .
-      CHECK <n0>-value(1) <> '%'. "Sowas wollen wir nicht: Systemvariablen
+      CHECK <n0>-value(1) <> '%'. "not needed: System variables
       lv_index = <n0>-prim_line_nr + 1.
       ls_varinfo-name = <n0>-value.
 
@@ -182,12 +182,12 @@ CLASS lcl_dump IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    "Sy-Werte werden anders gespeichert:
-    "SY-TITLE[AppKnight] Shortdump Analyzer
+    "Sy-values are stored different:
+    "SY-TITLE[AppKnight] dump info
     LOOP AT mt_dump_fields ASSIGNING <n0> USING KEY by_id WHERE id = 'SY'.
       ls_varinfo-name         = <n0>-value(8). "SY-ABCDE
-      ls_varinfo-length       = <n0>-len - 8.  "Länge um Länges des Variablennamens reduzieren
-      ls_varinfo-value        = <n0>-value+8.  "SY-Wert abgreifen
+      ls_varinfo-length       = <n0>-len - 8.  "reduce length of length of variable name
+      ls_varinfo-value        = <n0>-value+8.  "get SY-value
       INSERT ls_varinfo INTO TABLE mt_varinfo.
     ENDLOOP.
 
@@ -205,10 +205,13 @@ CLASS lcl_main DEFINITION.
 
     TYPES:
       BEGIN OF ts_dumpvar,
+        symandt     TYPE symandt,
         sydate      TYPE sydatum,
         sytime      TYPE syuzeit,
         syhost      TYPE syhost,
         syuser      TYPE syuname,
+        symodno     TYPE snap-modno,
+        syseqno     TYPE snap-seqno,
         dumpid      TYPE dumpid,
         programname TYPE progname,
         includename TYPE progname,
@@ -221,6 +224,8 @@ CLASS lcl_main DEFINITION.
       END OF ts_dumpvar,
       tt_dumpvar TYPE STANDARD TABLE OF ts_dumpvar WITH DEFAULT KEY.
 
+    CLASS-DATA mt_dumpvars     TYPE tt_dumpvar.
+
 
     CLASS-METHODS get_dump_info
       IMPORTING
@@ -229,8 +234,13 @@ CLASS lcl_main DEFINITION.
         VALUE(rt_dumpvars) TYPE tt_dumpvar.
 
     CLASS-METHODS display
-      CHANGING
-        ct_dumpvars TYPE tt_dumpvar.
+      IMPORTING
+        it_dumpvars TYPE tt_dumpvar.
+
+    CLASS-METHODS handle_double_click FOR EVENT double_click OF cl_salv_events_table
+      IMPORTING
+        row
+        column.
 
 
 ENDCLASS.
@@ -283,6 +293,9 @@ CLASS lcl_main IMPLEMENTATION.
       ls_dumpvar-sytime        = ls_snap-uzeit.
       ls_dumpvar-syhost        = ls_snap-ahost.
       ls_dumpvar-syuser        = ls_snap-uname.
+      ls_dumpvar-symodno       = ls_snap-modno.
+      ls_dumpvar-symandt       = ls_snap-mandt.
+      ls_dumpvar-syseqno       = ls_snap-seqno.
 
       TRY.
           ls_dumpinfo = lt_dumpinfo[
@@ -326,13 +339,14 @@ CLASS lcl_main IMPLEMENTATION.
 
   METHOD display.
 
+    mt_dumpvars = it_dumpvars.
 
     TRY.
         cl_salv_table=>factory(
           IMPORTING
             r_salv_table   = DATA(lr_salv_table)
           CHANGING
-            t_table        = ct_dumpvars ).
+            t_table        = mt_dumpvars ).
 
         lr_salv_table->get_functions( )->set_all( ).
         DATA(lr_columns) = lr_salv_table->get_columns( ).
@@ -353,10 +367,37 @@ CLASS lcl_main IMPLEMENTATION.
           ENDIF.
         ENDDO.
 
+        SET HANDLER handle_double_click FOR lr_salv_table->get_event( ).
+
         lr_salv_table->display( ).
 
       CATCH cx_salv_msg cx_salv_not_found INTO DATA(lo_error).
         MESSAGE lo_error TYPE 'I'.
+    ENDTRY.
+
+  ENDMETHOD.
+
+  METHOD handle_double_click.
+
+    TRY.
+        DATA(ls_dump) = mt_dumpvars[ row ].
+        CALL FUNCTION 'RS_SNAP_DUMP_DISPLAY'
+          EXPORTING
+            ahost          = ls_dump-syhost
+            datum          = ls_dump-sydate
+            mandt          = ls_dump-symandt
+            modno          = ls_dump-symodno
+            seqno          = '000'
+            uname          = ls_dump-syuser
+            uzeit          = ls_dump-sytime
+          EXCEPTIONS
+            no_entry_found = 1
+            OTHERS         = 2.
+        IF sy-subrc <> 0.
+          RETURN.
+        ENDIF.
+      CATCH cx_sy_itab_line_not_found.
+        RETURN.
     ENDTRY.
 
   ENDMETHOD.
@@ -380,6 +421,6 @@ FORM read.
 
 
   DATA(lt_dumpvars) = lcl_main=>get_dump_info( lt_snap ).
-  lcl_main=>display( CHANGING ct_dumpvars = lt_dumpvars ).
+  lcl_main=>display( lt_dumpvars ).
 
 ENDFORM.
